@@ -1,0 +1,66 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     96.01.07.09.08.45;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include "dsm_region.h"
+#include <stream.h>
+#include <cthreads.h>
+
+
+extern int client_no;
+extern mutex_t responder_done;
+extern int write_flag;
+extern void set_all(vm_prot_t);
+
+
+main()
+{
+    int             i;
+    int             *iptr, j;
+	 dsm_region			d;
+   
+/*  set the write flage to read */
+
+cout << "back from dsm_region constructor\n";
+     set_all(VM_PROT_NONE);
+
+     write_flag = FALSE;
+     iptr = d.get_iptr();
+
+     for(i = 0; i < ((vm_page_size/4) * 10); i += 2048)
+        printf("%d ", iptr[i]);
+      
+     write_flag = TRUE;
+
+     for(i = 0; i < ((vm_page_size/4) * 10); i += 2048) {
+        *iptr = 7;
+        *iptr = 8;
+        *iptr = 9;
+        iptr += 2048;
+   }
+   cout << "Client " << client_no << " SET DONE\n"; 
+
+
+}
+
+@

@@ -1,0 +1,81 @@
+Server ready to receive
+Got client init for client 1
+Got exception init from client 1
+Got responder init from client 1
+responder's port is 16
+do_write_fault called with client 1 page 2
+the page state is 0
+do_write_fault done
+do_write_fault called with client 1 page 3
+the page state is 0
+do_write_fault done
+do_write_fault called with client 1 page 4
+the page state is 0
+do_write_fault done
+do_write_fault called with client 1 page 5
+the page state is 0
+do_write_fault done
+do_write_fault called with client 1 page 0
+the page state is 0
+do_write_fault done
+do_write_fault called with client 1 page 1
+the page state is 0
+do_write_fault done
+Client done msg from client 1.
+ Q len = 1 number of clients = 4
+Got client init for client 2
+Got client init for client 3
+Got exception init from client 2
+Got exception init from client 3
+Got responder init from client 2
+responder's port is 28
+Got responder init from client 3
+responder's port is 29
+Write page owned by client 1 with res port 16 and exp port 15
+got page back from 1with message 3
+Got client init for client 4
+Write page owned by client 1 with res port 16 and exp port 15
+got page back from 1with message 3
+Got exception init from client 4
+Got responder init from client 4
+responder's port is 35
+Write page owned by client 1 with res port 16 and exp port 15
+got page back from 1with message 3
+Write page owned by client 1 with res port 16 and exp port 15
+got page back from 1with message 3
+Write page owned by client 1 with res port 16 and exp port 15
+got page back from 1with message 3
+do_write_fault called with client 2 page 0
+the page state is 1
+a_client = 2
+a_client = 1
+Sending page invalid msg to client 1
+write perm granted
+do_write_fault done
+Write page owned by client 1 with res port 16 and exp port 15
+got page back from 1with message 3
+do_write_fault called with client 3 page 1
+the page state is 1
+a_client = 2
+Sending page invalid msg to client 2
+a_client = 1
+Sending page invalid msg to client 1
+a_client = 3
+a_client = 4
+Sending page invalid msg to client 4
+write perm granted
+do_write_fault done
+Got clean up message
+do_write_fault called with client 4 page 1
+the page state is 2
+WRITE FAULT ON WRITE PAGE
+do_write_fault done
+Client done msg from client 3.
+ Q len = 2 number of clients = 4
+Client done msg from client 4.
+ Q len = 3 number of clients = 4
+Write page owned by client 4 with res port 35 and exp port 34
+got page back from 4with message 3
+Client done msg from client 2.
+ Q len = 4 number of clients = 4
+server done

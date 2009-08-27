@@ -1,0 +1,75 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     96.01.07.09.08.46;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include "dsm_region.h"
+#include <stream.h>
+ 
+void print_page(vm_address_t *iptr)
+{
+   for(int i = 0; i < page_int_size; i++)
+     cout << *iptr << " "; 
+}
+ 
+main()
+{
+   dsm_region d;
+   vm_address_t start_addr;
+   vm_address_t end_addr, New;
+   vm_address_t *nptr;
+
+   Cvm_allocate(&New, vm_page_size);
+   
+   nptr = (vm_address_t *) New;
+   for (int i = 0; i < page_int_size; i++)
+      nptr[i] = 8;
+
+   print_page(nptr);
+
+   d.copy_page(2, New);
+   
+   print_page((vm_address_t *) d.get_page_address(0));
+   print_page((vm_address_t *) d.get_page_address(2));
+
+   start_addr = (vm_address_t) d.get_iptr();
+
+   cout << "start address = " << start_addr << "\n";
+   end_addr = start_addr + (vm_page_size -1);
+
+    for(i = 0; i < 10; i++) {
+
+         cout << d.get_page_index(start_addr) << " ";
+         cout << d.get_page_index(end_addr) << "\n";
+         start_addr += vm_page_size;
+         end_addr += vm_page_size;
+      }
+       
+      cout << "get_page_address test\n";
+                                        
+    for(i = 0; i < 10; i++) {           
+                             
+         cout << d.get_page_address(i) << "\n";
+      }                                        
+}                                              
+
+@

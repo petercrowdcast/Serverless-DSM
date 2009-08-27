@@ -1,0 +1,37 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     96.01.07.09.09.31;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@
+# rsh obrien -n ~/mem/dsm2/vmatrix   8 256 &
+# rsh sela -n ~/mem/dsm2/vmatrix  4 256 &
+rsh keiko -n ~/mem/dsm2/vmatrix     8 256 &
+rsh worf -n ~/mem/dsm2/vmatrix      8 256 &
+rsh geordi -n ~/mem/dsm2/vmatrix    8 256 &
+rsh tasha -n ~/mem/dsm2/vmatrix     8 256 &
+rsh troi -n ~/mem/dsm2/vmatrix      8 256 &
+rsh guinan -n ~/mem/dsm2/vmatrix    8 256 &
+rsh picard -n ~/mem/dsm2/vmatrix    8 256 &
+vmatrix							         8 256 
+
+@

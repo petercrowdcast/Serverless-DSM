@@ -1,0 +1,37 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     95.12.28.16.13.26;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@dsm_server : dsm_server.h  dsm_server.cc  Dsm_msg.h Dsm_msg.o  
+	c++   -g -o dsm_server dsm_server.cc  ../C_mach_interface.o Dsm_msg.o
+
+Dsm_msg.o : Dsm_msg.h Dsm_msg.cc
+	c++  -g -c Dsm_msg.cc 
+
+
+test_server : test_server.cc Dsm_msg.h Dsm_msg.h
+	c++ -o test_server test_server.cc ../C_mach_interface.o Dsm_msg.o \
+	../dsm_region.o
+	strip test_server
+
+@

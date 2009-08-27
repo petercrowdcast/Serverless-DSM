@@ -1,0 +1,39 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     96.01.07.09.08.50;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include <C_mach_interface.h>
+#include <stream.h>
+
+
+
+main()
+{
+	vm_address_t pages;
+
+	Cvm_allocate(&pages, 2 * vm_page_size);
+	Cvm_deallocate(pages, 2 * vm_page_size);
+
+}
+
+@
