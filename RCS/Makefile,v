@@ -1,0 +1,56 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    pogilvie:1.1;
+comment  @# @;
+
+
+1.1
+date     96.01.07.09.09.59;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@dsm_client : dsm_region.h dsm_client.cc dsm_region.o dsm_server/Dsm_msg.o \
+dsm_server/Dsm_msg.h dsm.o
+	c++ -o dsm_client dsm_client.cc C_mach_interface.o dsm_region.o \
+	dsm_server/Dsm_msg.o dsm.o
+	strip dsm_client
+
+dsm.o : dsm.cc dsm_server/Dsm_msg.h
+	c++   -g -c dsm.cc
+
+dsm_region.o	: dsm_region.h dsm_region.cc
+	c++    -g -c dsm_region.cc
+
+dsm_server/Dsm_msg.o	: dsm_server/Dsm_msg.h dsm_server/Dsm_msg.cc
+	c++   -g -o dsm_server/Dsm_msg.o -c dsm_server/Dsm_msg.cc
+
+matrix : matrix.cc dsm_region.h dsm_region.o dsm.o dsm_server/Dsm_msg.h \
+dsm_server/Dsm_msg.o mfloat.h
+	c++  -g -o matrix matrix.cc C_mach_interface.o dsm_region.o \
+	dsm_server/Dsm_msg.o dsm.o
+
+vmatrix : vmatrix.cc dsm_region.h dsm_region.o dsm.o dsm_server/Dsm_msg.h \
+dsm_server/Dsm_msg.o mfloat.h
+	c++   -g -o vmatrix vmatrix.cc C_mach_interface.o dsm_region.o \
+	dsm_server/Dsm_msg.o dsm.o
+
+	
+vmatrix_ec : vmatrix_ec.cc dsm_region.h dsm_region.o dsm.o dsm_server/Dsm_msg.h \
+dsm_server/Dsm_msg.o mfloat.h event_counter.h
+	c++ -g -o vmatrix_ec vmatrix_ec.cc C_mach_interface.o dsm_region.o \
+	dsm_server/Dsm_msg.o dsm.o
+
+@

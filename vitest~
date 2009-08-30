@@ -1,0 +1,112 @@
+/*
+From Kevin_Enderby@next.com Wed Jan  8 14:49:18 1992
+Return-Path: <Kevin_Enderby@next.com>
+Received: from NeXT.COM by  data.acs.calpoly.edu  (NeXT-1.0 (From Sendmail 5.52)/NeXT-1.0)
+	id AA04379; Wed, 8 Jan 92 14:49:15 GMT-0800
+Received: from  ironcity.next.com  (ironcity) by oz.NeXT.COM (NeXT-1.0 (From Sendmail 5.52)/NeXT0.1-Aleph-bf)
+	id AA01631; Wed, 8 Jan 92 14:49:36 PST
+Message-Id: <9201082249.AA01631@oz.NeXT.COM>
+Received: by  ironcity.next.com  (NeXT-1.0 (From Sendmail 5.52)/NeXT-2.0)
+	id AA02202; Wed, 8 Jan 92 14:49:33 PST
+From: Kevin_Enderby@next.com
+To: pogilvie@data.acs.calpoly.edu
+Subject: Re: vm_protect() question 
+In-Reply-To: Your message of Wed, 8 Jan 92 14:07:09 PST .
+             <9201082210.AA04341@ data.acs.calpoly.edu > 
+Date: Wed, 08 Jan 92 14:49:30 PST
+Status: RO
+
+Well the problem you are having is with the second argument of your
+vm_allocate() call.  You are passing a (vm_address_t **) even though
+you have added a cast.
+
+  vm_address_t	*addr;
+
+  r = vm_allocate(task_self(), (vm_address_t *) &addr, size, TRUE);
+
+If you change the definition site to:
+  vm_address_t	addr;
+
+And the call site to:
+  r = vm_allocate(task_self(), &addr, size, TRUE);
+
+And also the line:
+  r = vm_protect(task_self(), addr, vm_page_size, FALSE,  
+to:
+  r = vm_protect(task_self(), addr, vm_page_size, FALSE,  
+
+Things work as expected.  The problem is the vm_allocate() call is a bit funky
+in that it takes a pointer to a vm_address_t and then fills it in (and yes I
+hate the use of all the Mach types too, they just confuse the hell out of me).
+
+Kev
+
+
+P.S. This is the entire program with my edits (Also reason you were getting a
+maxprot and initprot of zero is that you were asking about page 0 which by
+default is setup by the link editor to be allocated but have a VM_PROT_NONE
+(so to catch dereferences of NULL pointers)):
+*/
+
+#include <stdio.h>
+#include <mach.h>
+
+main()
+{
+  vm_address_t	addr;
+  vm_size_t      size = vm_page_size;
+  kern_return_t r;
+  int *iptr , i;
+  
+
+  vm_address_t   reg_addr;
+  reg_addr = addr;
+  
+
+  printf("before vm_protect\n");
+   
+
+printf("KEV before vm_region reg_addr = 0x%x\n", (unsigned int) reg_addr);
+  r = vm_region(task_self(), &reg_addr, &reg_size, &reg_prot,  
+&reg_max_prot,
+                &reg_inher, &shared, &object_name, &offset);
+  if(r != KERN_SUCCESS)
+    mach_error("vm_region", r);
+printf("KEV after vm_region reg_addr = 0x%x\n", (unsigned int) reg_addr);
+    
+
+  printf("current protection is %d\n max protection is %d\n",  
+reg_prot, 	
+  	 reg_max_prot);
+
+
+  r = vm_protect(task_self(), addr, vm_page_size, FALSE,  
+VM_PROT_NONE);
+  if(r != KERN_SUCCESS)
+     mach_error("vm_protect", r);
+
+  printf("after vm_protect\n");
+  reg_addr = addr;
+
+printf("PETER before vm_region reg_addr = 0x%x\n", (unsigned int) reg_addr);
+  r = vm_region(task_self(), &reg_addr, &reg_size, &reg_prot2,  
+&reg_max_prot2,
+                &reg_inher, &shared, &object_name, &offset);
+  if(r != KERN_SUCCESS)
+    mach_error("vm_region", r);
+    
+
+  printf("current protection is %d\n max protection is %d\n",  
+reg_prot2, 	
+  	 reg_max_prot2);
+
+  iptr = (int *) addr;
+
+  *iptr = 6;
+
+  }
+
+  fflush(stdout);
+
+}
+

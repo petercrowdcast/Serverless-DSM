@@ -1,0 +1,35 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     95.12.12.21.45.37;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@test_client 10 5 0&
+test_client 10 5 1&
+test_client 10 5 2&
+test_client 10 5 3&
+test_client 10 5 4&
+test_client 10 5 5&
+test_client 10 5 6&
+test_client 10 5 7&
+test_client 10 5 8&
+test_client 10 5 9&
+@

@@ -1,0 +1,139 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     96.01.07.09.10.00;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@/*
+   class		: dsm_region.h
+	author	: Peter Ogilvie
+	date		: 4/10/92
+	notes		: This class manages the area of memory allocated to the dsm client
+				  which acts as the client's interface to distribued shared memory.
+				  Since all instance variables are class variables only one object
+				  exists per client.
+*/
+
+
+#ifndef DSM_REGION
+#define DSM_REGION
+
+#include <C_mach_interface.h>
+#include <cthreads.h>
+
+#define address_null  (vm_address_t) 0
+#define page_int_size (vm_page_size/sizeof(int))	// Number of int in a page.
+
+class dsm_region {
+	friend any_t responder_thread(port_t);
+
+	protected:
+
+		static vm_address_t vmem;
+		// Class variable which points to client's locally allocated memory.
+
+		static unsigned page_count;
+		// Class variable contains the number of pages in the distributed shared
+		// memory.  Pages are indexed from 0 to page_count - 1.
+
+		void dsm_init(unsigned pcount, unsigned number_of_clients);
+		/*
+			results	: Allocates client's local memory buffer.
+			assumes	: 0 < pcount , 0 < number_of_clients <= MAX_CLIENTS
+			notes		: MAX_CLIENTS is defined in dsm_server.h
+		*/
+	
+	public:
+
+		dsm_region(unsigned pcount = 10, unsigned number_of_clients = 2);
+		/*
+			results	: When called the first time will allocate local memory for
+						  for client's access to distributed shared memory.  The
+						  number of pages allocated = pcount.
+			assumes	: pcount > 0, 0 < number_of_clients < MAX_CLIENTS
+			notes		: Task will terminate if memory allocation fails.  Memory
+						  is allocated in units of pages, thus if pcount = 10 and
+						  the page size is 8k 80k will be allocated.  Ten pages are
+						  allocated by default if no argument is specified.
+						  MAX_CLIENTS is defined in dsm_server.h
+		*/
+
+		int* get_iptr();
+		/*
+			returns	: An integer pointer to vmem so that the client may change
+						  the contens of the memory pointed to by vmem.
+			assumes	: Nothing.
+			notes		: Although the contents which vmem points to may be changed
+						  as a result of this call the address which vmem points to
+						  is protected.
+		*/
+
+		boolean_t check_address(vm_address_t addr);
+		/*
+			returns	: TRUE if addr is within the managed address space.  FALSE
+						  otherwise.
+			assumes	: Nothing.
+		*/
+
+		unsigned get_page_index(vm_address_t addr);
+		/*
+			returns	: The page index in which addr resides.
+			assumes	: addr is within the bounds of the mananged address space.
+		*/
+
+		vm_address_t get_page_address(unsigned page_index);
+		/*
+			returns	: The starting address of the page specified by page index.
+			assumes	: 0 <= page_index < page_count
+		*/
+
+		void copy_page(int page_index, vm_address_t page);
+		/*
+			results	: Physical copy of page is made to managed memory specified
+						  by page_index.
+			assumes	: 0 <= page_index < page_count
+						  page is an area of memory which is the size of a machine
+						  page.
+		*/
+
+		void temp_copy(vm_address_t *temp, unsigned page_index);
+		/* 
+			results	:	A tempary copy of the page specified by page_index
+							is made to the memory pointed by temp.
+			assumes	: 0 <= page_index < page_count
+			notes		:	temp will tipically reside on a stack.
+		*/
+
+		void protect_page(int page_index, vm_prot_t protection);
+		/*
+			results	: Page specifeid by page_index is given access protection
+						  specified by protection.
+			assumes	: 0 <= page_index < page_count
+			notes		: protection is given by the following from <vm/vm_prot.h>
+						  VM_PROT_READ		: read only permission
+						  VM_PROT_WRITE	: read and write perission
+						  VM_PROT_NONE		: No access allowed
+		*/
+
+};
+
+#endif
+@

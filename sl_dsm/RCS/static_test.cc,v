@@ -1,0 +1,47 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     95.12.12.21.45.43;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@
+
+
+// Can the C++ compiler on the NeXT handle static variables?
+
+#include <streams/stream.h> 
+
+class stest {
+
+	private:
+	 static int i;
+
+
+	public:
+		stest() { i = 0; }
+};
+
+static stest::i;
+main()
+{
+	cout << "wow it works!\n";
+}
+@

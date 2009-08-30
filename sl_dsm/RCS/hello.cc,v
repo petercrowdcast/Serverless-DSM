@@ -1,0 +1,34 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     95.12.12.21.45.38;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include <iostream.h>
+#include <mach/cthreads.h>
+
+main()
+{
+
+	cout << "hello, world!\n";
+
+}
+@

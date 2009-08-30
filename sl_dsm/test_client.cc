@@ -1,0 +1,81 @@
+#include "sl_dsm_region.h"
+#include <mint.h>
+#include <event_counter2.h>
+
+inline int start_index(int client_no, int number_clients, int page_count)
+{
+   return client_no * page_int_size * page_count / number_clients;
+}
+
+inline int stop_index(int client_no, int number_clients, int page_count)
+{
+   return ((client_no + 1) * page_int_size * page_count/ number_clients) - 1;
+}
+
+void print_page(mint *m)
+{
+	for(int i = 0; i < page_int_size * 2; i++)
+		cout << m[i];
+}
+
+void set_data(mint *m, int client_no, int start, int stop)
+{
+	for(int i = start; i <= stop; i++)
+		m[i] = m[i] + client_no + 1;
+}
+
+
+main(int argc, char *argv[])
+{
+	mint *iptr;
+	int *ec_loc;
+
+// get the arguments from the command line.
+   if(argc != 4) {
+      cerr << "usage: vmatrix <number of clients> <size of square matrix> "
+      << " <client_no> \n";
+      exit(-1);
+   }
+   int number_clients = atoi(argv[1]), size = atoi(argv[2]);
+   int client = atoi(argv[3]);
+	int page_count = 3;
+
+ 	sl_dsm_region  d(page_count, number_clients, client);
+
+	iptr = (mint *) d.get_iptr();
+
+
+	port_t local_port;
+	Cport_allocate(&local_port);
+	Dsm_msg sync_msg(client, d.get_sync_port(), local_port);
+
+	if(client == 0)
+	{
+		// init goes here
+		for(int i = 0; i < page_int_size; i++)
+			*iptr = 0;
+		sync_msg.send_control(INIT_DONE);
+	}
+	else
+		sync_msg.wait_control(WAIT_INIT);
+
+int start = start_index(client, number_clients, 2);
+int stop = stop_index(client, number_clients, 2);
+
+cout << "client " << client << " start index " << start << "\n";
+cout << "client " << client << " stop index " << stop << "\n";
+	set_data(iptr, client, start, stop);
+	
+	if(client == 0)
+	{
+		// cleanup goes here
+		sync_msg.wait_control(CLEAN_UP);
+		print_page(iptr);
+	}
+
+
+	sync_msg.wait_control(CLIENT_DONE);
+
+
+	cout << "client " << client << "done\n";
+}

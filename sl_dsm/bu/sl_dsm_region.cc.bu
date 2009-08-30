@@ -1,0 +1,343 @@
+/*
+	file		: sl_dsm_region
+	author	: Peter Ogilvie
+	date		: 6/9/92
+	notes		: Implementation of server-less distributed shared memory.
+*/
+
+#include "sl_dsm_region.h"
+
+
+static ptable_entry *page_table = NULL;
+
+static inline unsigned hash(unsigned page_no, unsigned client_count)
+{
+		return page_no % client_count;
+}
+
+sl_dsm_region::sl_dsm_region()
+{
+}
+sl_dsm_region::sl_dsm_region(unsigned pcount, unsigned ccount,
+								unsigned client_number) : dsm_region(pcount, ccount)
+{
+	cout << "Contructing sl_dsm_region with client_no " << client_number <<
+	"\n";
+	
+
+	if(!page_table)
+	{
+		self = client_number;
+		client_table = new port_t[ccount];
+		page_table = new ptable_entry[pcount];
+
+		if(!(client_table && page_table)) {
+			cerr << "ERROR : allocation of memory failed during\
+			construction of sl_dsm_region\n";
+			exit(-1);
+		}
+
+		ptable_entry	*p = page_table;
+
+		for(int i = 0; i < page_count; i++, p++)
+		{
+			p->lock = mutex_alloc();
+			p->owner = hash(i, ccount);
+
+			if(p->owner == self)
+			{  // This client manages this page.
+				cout << "client " << self << " owns page " << i << "\n";
+				protect_page(i, VM_PROT_ALL);
+				p->state = WRITE;
+				p->readers = new intVQueue(ccount);
+			}
+			else
+			{
+				p->state = NO_ACCESS;
+				p->readers = NULL;
+			}
+			p->writer = PORT_NULL;
+		}
+
+		for(i = 0; i < ccount; i++)
+			client_table[i] = PORT_NULL;	
+
+	}
+}
+
+
+void sl_dsm_region::read_fault(unsigned page_index, unsigned who)
+{
+	ptable_entry			*page = &page_table[page_index];
+	vm_address_t			*page_data;
+	port_t					local_port;
+	
+	Cport_allocate(&local_port);
+	
+	Dsm_msg					m(self, PORT_NULL, local_port);
+
+	page_data = (vm_address_t *) get_page_address(page_index);
+
+	if(client_table[who] == PORT_NULL)
+		get_port(who);
+	
+	if(client_table[page->owner] == PORT_NULL)
+		get_port(page->owner);
+
+	mutex_lock(page->lock);
+	
+	if(page->owner == self)
+	{	// this client manages this page
+		switch(page->state)
+		{
+		
+			case NO_ACCESS :	// single writer is another client
+				m.get_page(READ_DATA_REQUESTED, page_index, page->writer);
+				page->readers->enq(self);
+				page->state = READ;
+				protect_page(page_index, VM_PROT_ALL);
+				copy_page(page_index, (vm_address_t) m.get_page_ptr());
+				protect_page(page_index, VM_PROT_READ);
+			
+				if(who != self)
+				{
+					page->readers->enq(client_table[who]);
+					m.send_page(READ_DATA_PROVIDED, page_index, page_data,
+									client_table[who]);
+				}
+			break;
+		
+			case READ :	// This client is one of the readers.
+				if(who != self)
+				{
+					page->readers->enq(client_table[who]);
+					m.send_page(READ_DATA_PROVIDED, page_index, page_data,
+									client_table[who]);
+				}
+				else
+				{
+					cerr << "ERROR: client " << self <<
+					" had a read fault on a read page " << page_index << ".\n";
+					exit(-1);
+				}
+			break;
+		
+			case WRITE :  // This client is the single writer.
+				if(who != self)
+				{
+					protect_page(page_index, VM_PROT_READ);
+					page->readers->enq(self);	// access downgraded to read only
+					page->readers->enq(client_table[who]);
+					m.send_page(READ_DATA_PROVIDED, page_index,
+									page_data, client_table[who]);
+				}
+				else
+				{
+					cerr << "ERROR: client " << self <<
+					" had a read fault on write page " << page_index << ".\n";
+					exit(-1);
+				}
+			break;
+			
+			default :
+				cerr << "ERROR: bad page state " << page->state <<
+				" on read fault " << " on page " << page_index <<
+				" on client " << self << ".\n";
+				exit(-1);
+			break;
+		}
+	}
+	else
+	{	// owner of this page is another client, pass the request along
+		m.get_page(READ_FAULT,page_index, page->owner);
+		protect_page(page_index, VM_PROT_ALL);
+		copy_page(page_index, (vm_address_t) m.get_page_ptr());
+		protect_page(page_index, VM_PROT_READ);
+	}
+	mutex_unlock(page->lock);
+	Cport_deallocate(local_port);
+}
+
+void sl_dsm_region::write_fault(unsigned page_index, unsigned who)
+{
+	ptable_entry			*page = &page_table[page_index];
+	port_t					local_port, a_client;
+	intVQueue				*the_readers;
+	vm_address_t			temp[page_int_size];
+	
+	Cport_allocate(&local_port);
+	
+	Dsm_msg					m(self, PORT_NULL, local_port);
+
+	if(client_table[who] == PORT_NULL)
+		get_port(who);
+
+	if(client_table[page->owner] == PORT_NULL)
+		get_port(page->owner);
+	
+	mutex_lock(page->lock);
+	
+	if(page->owner == self)
+	{	// this client manages this page
+		switch(page->state)
+		{
+		
+			case NO_ACCESS :	// single writer is another client
+				// invalidate the single writer
+				m.get_page(WRITE_DATA_REQUESTED, page_index, page->writer);
+				
+				if(who == self)  
+				{  // this client had a write fault
+					page->state = WRITE;
+					page->writer = client_table[self];
+					protect_page(page_index, VM_PROT_ALL);
+					copy_page(page_index, (vm_address_t) m.get_page_ptr());
+				}
+				else
+				{  // some other client had a write fault
+					page->writer = client_table[who];
+					m.send_page(WRITE_DATA_PROVIDED, page_index,
+									m.get_page_ptr(), client_table[who]);
+				}
+			break;
+		
+			case READ :
+				the_readers = page->readers;
+				while(!the_readers->empty())
+				{
+					a_client = the_readers->deq();
+					
+					if(a_client != client_table[self])
+						m.wait_control(PAGE_INVALID, page_index, a_client);
+				}
+				if(who == self)
+				{	// This client is one of the readers and wants WRITE privilege.
+					page->state = WRITE;
+					page->writer = client_table[self];
+					protect_page(page_index, VM_PROT_ALL);
+				}
+				else
+				{	// Another client wants write privilege
+					page->state = NO_ACCESS;
+					page->writer = client_table[who];
+					protect_page(page_index, VM_PROT_READ);
+					temp_copy(temp, page_index);
+					protect_page(page_index, VM_PROT_NONE);
+					m.send_page(WRITE_DATA_PROVIDED, page_index,
+									temp, client_table[who]);
+				}
+					
+			break;
+		
+			case WRITE :  // This client is the single writer.	
+			
+				if(who != self)
+				{
+					page->state = NO_ACCESS;
+					page->writer = client_table[who];
+				// Down grade to read to make a temp copy which will be up to date
+					protect_page(page_index, VM_PROT_READ);
+					temp_copy(temp, page_index);
+					m.send_page(WRITE_DATA_PROVIDED, page_index, temp,
+									client_table[who]);
+				}
+				else
+				{
+					cerr << "ERROR: client " << self <<
+					" had a write fault on write page " << page_index << ".\n";
+					exit(-1);
+				}
+			break;
+			
+			default :
+				cerr << "ERROR: bad page state " << page->state <<
+				" on read fault " << " on page " << page_index <<
+				" on client " << self << ".\n";
+				exit(-1);
+			break;
+		}
+	}
+	else
+	{	// owner of this page is another client; pass the request along
+		m.get_page(WRITE_FAULT,page_index, client_table[page->owner]);
+		page->state = WRITE;
+		page->writer = client_table[self];
+		protect_page(page_index, VM_PROT_ALL);
+		copy_page(page_index, (vm_address_t) m.get_page_ptr());
+	}
+	mutex_unlock(page->lock);
+	Cport_deallocate(local_port);
+}
+
+
+void sl_dsm_region::protect_page(unsigned page_index, vm_prot_t protection)
+{
+	dsm_region::protect_page(page_index, protection);
+}
+
+void sl_dsm_region::get_port(unsigned who)
+{
+	String client_name = "client", number = dec(who);
+
+	client_name += number;
+
+	Rnetname_lookup((char *)client_name, &client_table[who], retries);
+}
+
+
+void sl_dsm_region::invalidate(unsigned page_index, port_t who)
+{
+	Dsm_msg m(self, who, PORT_NULL);
+
+	ptable_entry *page = &page_table[page_index];
+
+	mutex_lock(page->lock);
+
+	page->state = NO_ACCESS;
+	protect_page(page_index, VM_PROT_NONE);
+
+	m.send_control(INVALID_DONE);
+
+	mutex_unlock(page->lock);
+}
+
+void sl_dsm_region::send_read_page(unsigned page_index, port_t who)
+{
+
+	Dsm_msg m(self, who, PORT_NULL);
+
+	ptable_entry *page = &page_table[page_index];
+	vm_address_t *page_data = (vm_address_t *) get_page_address(page_index);
+
+	mutex_lock(page->lock);
+
+	page->state = READ;
+	protect_page(page_index, VM_PROT_READ);
+
+	m.send_page(READ_DATA_PROVIDED, page_index, page_data, who);
+
+	mutex_unlock(page->lock);
+	
+}
+
+void sl_dsm_region::send_write_page(unsigned page_index, port_t who)
+{
+	Dsm_msg m(self, who, PORT_NULL);
+	vm_address_t temp[page_int_size];
+
+	ptable_entry *page = &page_table[page_index];
+	vm_address_t *page_data = (vm_address_t *) get_page_address(page_index);
+
+	mutex_lock(page->lock);
+
+	page->state = NO_ACCESS;
+	page->writer = who;
+	protect_page(page_index, VM_PROT_READ);
+	temp_copy(temp, page_index);
+	protect_page(page_index, VM_PROT_NONE);
+
+	m.send_page(WRITE_DATA_PROVIDED, page_index, temp, who);
+
+	mutex_unlock(page->lock);
+}
+

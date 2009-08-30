@@ -1,0 +1,29 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     95.12.12.21.45.40;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@rsh guinan -n ~/mem/sl_dsm/test_client 3 5 0 > Zero&
+rsh tasha -n ~/mem/sl_dsm/test_client 3 5 1 > One&
+rsh troi -n ~/mem/sl_dsm/test_client 3 5 2 > Two
+
+@

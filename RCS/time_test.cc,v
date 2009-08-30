@@ -1,0 +1,46 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     96.01.07.09.08.49;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include <stream.h>
+#include <builtin.h>
+
+main()
+{
+	int i;
+	double d;
+
+	start_timer();
+
+	for (i = 0; i < 1000000; i++);
+		
+
+	cout << "time to run = " << return_elapsed_time() << "\n";
+
+	sleep(1);
+
+	cout << "time after sleep(1) " << return_elapsed_time() << "\n";
+}
+
+
+@

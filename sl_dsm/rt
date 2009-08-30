@@ -1,0 +1,4 @@
+rsh guinan -n ~/mem/sl_dsm/test_client 3 5 0 > Zero&
+rsh tasha -n ~/mem/sl_dsm/test_client 3 5 1 > One&
+rsh troi -n ~/mem/sl_dsm/test_client 3 5 2 > Two
+

@@ -1,0 +1,28 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     95.12.12.21.45.38;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@vmatrix 3 64 0  &
+vmatrix 3 64 1  &
+vmatrix 3 64 2   
+@

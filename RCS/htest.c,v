@@ -1,0 +1,36 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @ * @;
+
+
+1.1
+date     96.01.07.09.08.43;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include <sys/param.h>
+
+
+main()
+{
+	char name[64];
+
+	gethostname(name, 64);
+
+	printf(name);
+}
+@

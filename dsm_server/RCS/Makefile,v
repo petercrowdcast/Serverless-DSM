@@ -1,0 +1,44 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     95.12.28.16.13.26;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@HOME    = /data/home/u4/pogilvie
+GNU     = /usr/local/gnu/lib
+PLIB    = /data/home/u4/pogilvie/lib/plib.a
+UNIX	  = /usr/include/ansi
+CPFLAGS = -g 
+INCLUDE = -I${UNIX} -I${HOME}/lib/include 
+
+
+OBJS    = Dsm_msg.o ${PLIB} ${HOME}/lib/C_mach_interface.o 
+
+dsm_server : dsm_server.h  Dsm_msg.o Dsm_msg.h dsm_server.o
+	c++ ${CPFLAGS} ${INCLUDE} -o dsm_server dsm_server.o ${OBJS}
+
+dsm_server.o : dsm_server.h dsm_server.cc
+	c++ ${CPFLAGS} ${INCLUDE} -c dsm_server.cc
+
+Dsm_msg.o : Dsm_msg.h Dsm_msg.cc
+	c++ ${CPFLAGS} ${INCLUDE} -c Dsm_msg.cc
+
+@

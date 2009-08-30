@@ -1,0 +1,209 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @@;
+
+
+1.1
+date     96.01.07.09.08.48;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include <stdio.h>
+#include <cthreads.h>
+#include <stdlib.h>
+#include "dsm_region.h"
+#include "dsm_server/dsm_server.h"
+#include "dsm_server/Dsm_msg.h"
+#include "mfloat2.h"
+#include <builtin.h>
+
+void print_matrix(mfloat *m, int size_x, int size_y)
+{
+	int i, limit = size_x * size_y;
+	
+	for(i = 0; i < limit; i++)
+	{
+		if(i % size_x == 0)
+			cout << "\n";
+			
+//		if(i % 100 == 0)
+			cout << " " << m[i];
+		
+	}
+	cout << "\n";
+}
+
+void fill_easy(mfloat *m, int size_x, int size_y)
+{
+	int i;
+	
+	for(i = 0; i < size_x * size_y; i++)
+		m[i] = i;	// changed form *m++
+}
+
+void fill_zero(mfloat *m , int size_x, int size_y)
+{
+	for(int i = 0; i < size_x * size_y; i++)
+		m[i] = 0.0;
+}
+
+
+// assumes:	Square matrix with side = side
+// results:	Square matrix is fill to identity matrix.
+
+void fill_identity(mfloat *m, int side)
+{
+	int i;
+	
+		for(i = 0; i < side * side; i++)
+		{
+			if(i % (side +1))
+				m[i] = 0.0;		// changed form *m++
+			else
+				m[i] = 1.0;		// changed form *m++
+		}
+}
+
+void mult_matrix(mfloat *result, mfloat *a, int size_ax, int size_ay,
+							    mfloat *b, int size_bx, int size_by)
+{
+	int i, j, limit, pos1, pos2;
+	mfloat temp;
+	
+	limit = size_ax * size_ay;
+	
+	for(i = 0; i < limit; i++)
+	{
+		pos1 = i - (i % size_ax);
+		pos2 = i % size_by;
+		for(j = 0; j < size_by; j++)
+		{
+			result[i] = result[i] + (a[pos1] * b[pos2]);
+			pos1++;
+			pos2 += size_by;
+		}
+	}
+}
+
+// Assumes: Square matrix
+void pmult_matrix(mfloat *result, mfloat *a, int side_a, 
+							    mfloat *b, int side_b, 
+							    int start, int stop)
+{
+	int i, j, pos1, pos2;
+	
+	
+	for(i = start; i < stop; i++)
+	{
+		pos1 = i - (i % side_a);
+		pos2 = i % side_b;
+		for(j = 0; j < side_b; j++)
+		{
+			result[i] = result[i] + (a[pos1] * b[pos2]);
+			pos1++;
+			pos2 += side_b;
+		}
+	}
+}
+extern int client_no;
+extern port_t server_port;
+	
+main()
+{
+	
+	mfloat *m, *x, *y;
+	
+	int size = 64;
+	int elements = size * size;
+	int *iptr;
+	dsm_region	d(10, 4);  // number of pages, number of clients
+	double atime;
+	port_t  done_port;
+	Cport_allocate(&done_port);
+	Dsm_msg done_msg(client_no, server_port, done_port);
+	done_msg.set_page_no(0);
+	done_msg.set_page(PAGE_NULL);
+	done_msg.set_client_no(client_no);
+
+	
+	cout << " the server port is " << server_port << "\n";
+
+	iptr = d.get_iptr();
+	
+	cout << "the size of an mfloat is " << sizeof(mfloat) << "\n";
+	
+	m = (mfloat *) iptr;
+	x = m + 0x1000;
+	y = x + 0x1000;
+
+
+	switch(client_no)
+	{
+		case 1	:
+			fill_easy(x, size, size);
+		 	cout << "done with fill\n";
+			fill_identity(y, size);
+	
+			fill_zero(m, size, size);
+	
+			pmult_matrix(m, x, size, y, size, 0, elements/4);
+	
+			done_msg.set_request(CLIENT_DONE);
+			done_msg.set_client_no(client_no);
+			done_msg.rpc();
+     break;
+
+	  case 2	   :
+			while(float(m[2049]) != 0);
+		
+			pmult_matrix(m, x, size, y, size, elements/4 , elements/2);
+
+			done_msg.set_request(CLEAN_UP);
+			done_msg.rpc();
+			cout << "the final result is....\n";
+			print_matrix(m, size, size);
+			done_msg.set_request(CLIENT_DONE);
+			done_msg.set_client_no(client_no);
+			done_msg.rpc();
+		break;
+
+		case 3 	:
+			while(float(m[2049]) != 0);
+
+			pmult_matrix(m, x, size, y, size, elements/2 ,   (3 * elements) /4);
+
+			done_msg.set_request(CLIENT_DONE);
+			done_msg.set_client_no(client_no);
+			done_msg.rpc();
+		break;
+
+		case 4 	:
+			while(float(m[3073]) != 0);
+
+			pmult_matrix(m, x, size, y, size, (3 * elements)/4 , elements);
+
+			done_msg.set_request(CLIENT_DONE);
+			done_msg.set_client_no(client_no);
+			done_msg.rpc();
+		break;
+
+
+	}
+
+	cout  << "client " << client_no << " done.\n";
+}
+@

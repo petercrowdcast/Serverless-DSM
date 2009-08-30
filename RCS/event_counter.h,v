@@ -1,0 +1,96 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @ * @;
+
+
+1.1
+date     96.01.07.09.09.18;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@//	class		: event_counter
+//	author	: Peter Ogilvie
+//	date		: 6/3/92
+//	notes		: This class implements user defined events for programs ultilizing
+//				  distributed shared memory as implemented by class dsm_region.
+//				  Event_counter provideds an easy way for clients of distributed
+//				  shared memory to signal barrier events to other clients in the
+//				  system. Use of event_counter may be quite expensive, generating
+//            numberous page_faults in the system.  The cost of event_counters
+//            grows as the number of clients participating in the event grows.
+//				  If this cost is too high users may wish to define there own 
+//            events via a message based protocol.  The ease of use of event_
+//            counter would ditate that they would be quit suitible for 
+//				  prototyping the interactions between clients in the system.
+
+#ifndef EVENT_COUNTER
+#define EVENT_COUNTER
+#include <mint.h>
+#include <C_mach_interface.h>
+
+class event_counter {
+
+	private:
+		mint	*addr;
+		mint	value;
+
+	
+	public:
+		event_counter(int *where, int the_value);
+		//	results	: an event counter is contructed at address where with 
+		//            counter = the_value.  This is the value which will
+		//				  trigger the event.
+		//	assumes  : where is an address within managed distributed shared
+		// 			  memory (see class dsm_region)
+		//	notes		: where should be an address which is not used for other
+		//            purposed (such as computation) by the client program.
+
+		void wait();
+		// results	:  Calling thread is blocked until the value at the address
+		//             of the event_counter reaches the initailized value.
+		//	notes		:  May wiat forevery untill this or another advances the
+		//					counter.
+		
+
+		void advance();
+		// results	: Event_counter is advanced by 1.
+};
+
+event_counter::event_counter(int *where, int the_value)
+{
+	addr = (mint *) where;
+	value = the_value;
+	*addr = 0;
+}
+
+inline void event_counter::wait()
+{
+	while(*addr != value) {
+	// cout <<  "event counter waiting for value of " << value << "\n";
+	  Cthread_yield();	// yeild to any other thread with work to do
+								// spin otherwise.
+	}
+}
+
+inline void event_counter::advance()
+{
+ 	*addr = *addr + 1;	
+	cout << "event counter has been advanced to " << *addr <<"\n";
+}
+#endif
+
+@

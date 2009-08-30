@@ -1,0 +1,1489 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     95.12.12.21.45.35;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@/*
+   class    :  sl_dsm_region
+   author   :  Peter Ogilvie
+   date     :  6/9/92
+   notes    :  This class addes coherency management to dsm_region so that
+               a server is no longer required in the system.
+*/
+
+#ifndef SL_DSM_REGION
+#define SL_DSM_REGION
+
+#include <C_mach_interface.h>
+#include <cthreads.h>
+
+#include "../dsm2/dsm_server/Dsm_msg.h"
+#include <stream.h>
+#include <String.h>
+#include <int.VQueue.h>
+#include <builtin.h>
+#include <timer.h>
+
+#define address_null  (vm_address_t) 0
+#define page_int_size (vm_page_size/sizeof(int))   // Number of int in a page.
+
+// called by sl_dsm_region constructor to start threads.
+int init(unsigned int, port_t respond_port);
+int sync_thread(unsigned client_count);
+
+enum page_state { NO_ACCESS, READ, WRITE };
+
+#define delta 0         // Minimum time which a page must remain on a client.
+                        // This is a tunable parameter.
+#define NUM_RESPONDERS  3  // number of responder threads for each client.
+
+
+// types of requests (same as single server)
+#define SYNC                  -1
+#define CLIENT_INIT            0
+#define EXCEPTION_INIT         1
+#define RESPONDER_INIT         2
+#define READ_FAULT             3
+#define WRITE_FAULT            4
+#define WRITE_DATA_PROVIDED    5
+#define CLIENT_DONE            6
+#define PAGE_INVALID           7
+#define WRITE_PERM_GRANTED     8
+#define TEST                   9
+#define READ_DATA_REQUESTED    10
+#define WRITE_DATA_REQUESTED   11
+#define READ_DATA_PROVIDED     12
+#define INVALID_DONE           13
+#define CLEAN_UP               14
+#define INIT_DONE              15
+#define WAIT_INIT              16
+
+
+const MAX_RETRIES = 3;     // number of times to try looking for a remote port.
+
+// Structure used for record keeping for each page in the page table.
+typedef struct {
+   mutex_t     lock;       // Only one thread at a time may modify a page.
+   timer    time_stamp;    // Records how long a page has been on owner.
+   page_state  state;      
+   unsigned    owner;      // Client number of the owner of this page.
+   port_t      writer;     // Port of the single writer.
+   intVQueue   *readers;   // This of ports of readers of this page.
+}ptable_entry;
+
+
+class sl_dsm_region {
+
+   private:
+      static vm_address_t vmem;
+      // Class variable which points to client's locally allocated memory.
+  
+      static unsigned page_count;
+      // Class variable contains the number of pages in the distributed shared
+      // memory.  Pages are indexed from 0 to page_count - 1.
+
+      static ptable_entry     *page_table;
+      static port_t           *responder_ports;
+// static port_t           *exception_ports;
+      static port_t           sync_port;
+      static unsigned         self;
+// just required for debugging
+      static unsigned         number_of_clients;
+
+      void init_ports(unsigned client_count);
+      // results  :  Memory for responder_ports table is allocated.
+      //             The local responder port is allocated, filled into
+      //             the table and checked in with the Mach network
+      //             name server. Client_count is the number of clients
+      //             in the system.
+      // assumes  :  Nothing.
+      // notes    :  If memory allocation, port allocation, or checking local
+      //             names in fails the program will exit.
+
+      void lookup_ports(unsigned client_count);
+      // results  :  Responder ports for the other clients are
+      //             filled into their respective tables. Client_count is the
+      //             number of clients in the system.
+      // assumes  :  Init_ports has been previously called.
+      // notes    :  Lookup_ports attempts to find ports of other clients
+      //             if attempts fail.  The number of retries lookup_ports
+      //             will attempt may be set by resetting the constant 
+      //             MAX_RETRIES.
+
+      int rport(port_t r);
+      // returns  :  Returns the client number of a given responder port.
+      // notes    :  This function is only used for debugging so the responder
+      //             port number are transformed into more understandable and
+      //             constant client numbers.
+   
+   public:
+      sl_dsm_region(unsigned pcount, unsigned ccount, unsigned client_number);
+      // results  :  A server-less region of distributed shared memory is 
+      //             created.  Where: pcount = number of virtual memory pages
+      //             in the region, ccount = number of clients in the system,
+      //             and client_number is the unique id for the calling client.
+      //             Where 0 <= client_number < ccount
+      // assumes  :  Parameters are consistent on each client on which a region
+      //             is created.  I.e. each should create a region with the
+      //             same pcount and ccount and unique client_number where each
+      //             client_number in the range of ccount is represented.
+      // notes    :  This and get_iptr() are the only methods which should
+      //             be called directly by clients.
+
+
+      sl_dsm_region();
+      // notes    :  This contructory is provided to allow the management
+      //             threads (exc_thread, responder_thread) access to 
+      //             sl_dsm_region methods and class variables
+      
+      port_t get_sync_port() { return sync_port; }
+      // returns  :  the sync server port.  This server handles events in the
+      //             system.
+
+      int* get_iptr();
+      // 
+      // returns  :  An integer pointer to vmem so that the client may change
+      //             the contens of the memory pointed to by vmem.
+      // assumes  :  Nothing.
+      // notes    :  Although the contents which vmem points to may be changed
+      //             as a result of this call the address which vmem points to
+      //             is protected.
+
+      boolean_t check_address(vm_address_t addr);
+      // returns  :  TRUE if addr is within the managed address space.  FALSE
+      //             otherwise.
+                    
+      unsigned get_page_index(vm_address_t addr);
+      // returns  :  The page index in which addr resides.
+      // assumes  :  addr is within the bounds of the managed address space.
+                                                                            
+      vm_address_t get_page_address(unsigned page_index);
+      // returns  :  The starting address of the page specified by page index.
+      // assumes  :  0 <= page_index < page_count                             
+                                                
+      void copy_page(int page_index, vm_address_t page);
+      // results  :  Physical copy of page is made to managed memory specified
+      //             by page_index. 
+      // assumes  :  0 <= page_index < page_count                             
+      //             page is an area of memory which is the size of a machine
+      //             page.                                                   
+                         
+      void temp_copy(vm_address_t *temp, unsigned page_index);
+      // results  :  Physical copy of page specified by page_index is made
+      //             to memory pointed to by temp which will usually reside
+      //             on a stack.
+      // notes    :  Temp_copies are required to avoid some race conditions.
+                                                              
+      void protect_page(int page_index, vm_prot_t protection);
+      // results  : Page specified by page_index is given access protection
+      //             specified by protection.                               
+      // assumes  : 0 <= page_index < page_count
+      // notes    : protection is given by the following from <vm/vm_prot.h>
+      //                VM_PROT_READ   : read only permission                  
+      //                VM_PROT_ALL    : read and write permission             
+      //                VM_PROT_NONE   : No access allowed       
+
+      
+      void read_fault(unsigned page_index, unsigned client, port_t who);
+      // results  :  Page specified by page_index is mapped into memory area
+      //             pointed to by class variable vmem. This page will contain
+      //             data reflecting the most recent write in the system.
+      //             Access protection is set to read only for this page.
+      // assumes  :  Page_index is within the managed area and client is a
+      //             valid client id.
+      // notes    :  Read_fault() is called by both the exception and responder
+      //             threads.
+      
+
+      void write_fault(unsigned page_index, unsigned client, port_t who);
+      // results  :  Page specified by page_index is mapped into memory area
+      //             pointed to by class variable vmem. This page will contain
+      //             data reflecting the most recent write in the system.
+      //             Access protection is set to read/write for this page.
+      // assumes  :  Page_index is within the managed area and client is a
+      //             valid client id.
+      // notes    :  Write_fault() is called by both the exception and
+      //             responder threads.
+
+
+      void invalidate(unsigned page_index, port_t who);
+      // results  :  Page specified by page_index has protection set to no
+      //             access. A confirmation message is sent to the client
+      //             listening on port who.
+      // assumes  :  Page_index is within the managed area and who is a
+      //             currently valid port number
+      // notes    :  This method is called by the responder thread in response
+      //             to invalidation requests form managing clients.
+
+
+      void send_read_page(unsigned page_index, port_t who);
+      // results  :  Page specified by page_index has protection changed to
+      //             read only and data in the page is sent to managing client
+      //             receiving on port who.
+      // assumes  :  Page_index is within the managed area and who is a 
+      //             currently valid port number.
+      // notes    :  This method is called by the responder thread in response
+      //             to SEND_READ_PAGE requests.
+
+
+      void send_write_page(unsigned page_index, port_t who);
+      // results  :  Page specified by page_index has protection changed to
+      //             no access and data in the page is sent to
+      //             managing client receiving on port who.
+      // assumes  :  Page_index is within the managed area and who is a 
+      //             currently valid port number.
+      // notes    :  This method is called by the responder thread in response
+      //             to SEND_WRITE_PAGE requests.
+
+
+      unsigned Self() { return self; }
+      // returns  : Self which is the client id of this client.
+
+      void get_port(unsigned who);
+      // results  :  Responder port for client number who is found by asking
+      //             net name server (nmserve). 
+      // assumes  :  Who is a valid client number.
+      // notes    :  Will try to find port three times and exit on failure.
+
+};
+
+
+#endif
+
+/*
+   file     : sl_dsm_region
+   author   : Peter Ogilvie
+   date     : 6/9/92
+   notes    : Implementation of server-less distributed shared memory.
+*/
+
+#include "sl_dsm_region.h"
+
+
+void debug_page_io(char *debug_msg, Dsm_msg& m, int who)
+{
+#ifdef DEBUG
+
+   float *fptr = (float *) m.get_page_ptr();
+
+   cout << debug_msg <<
+   " msg_request = " << m.get_request() <<
+   " remote client = " << who <<
+   " page no. = " << m.get_page_no() <<
+   " msg_value = " << fptr[1] << " " << fptr[1024] << "\n";
+
+#endif
+}
+
+int sl_dsm_region::rport(port_t r)
+{
+   for(int i = 0; i < number_of_clients; i++)
+      if(responder_ports[i] == r)
+         return i;
+
+   return -1;
+}
+
+static ptable_entry *page_table = NULL;
+
+// function hash()
+// returns  : Client number which owns the page page_no.
+// notes    : This function is used to distribute ownershipe of pages 
+//            through out the system.
+static inline unsigned hash(unsigned page_no, unsigned client_count)
+{
+      return page_no % client_count;
+}
+
+sl_dsm_region::sl_dsm_region()
+{
+// Empty constructor so the management threads may have access to 
+// sl_dsm_region methods.
+}
+sl_dsm_region::sl_dsm_region(unsigned pcount, unsigned ccount,
+                        unsigned client_number)
+{
+
+   if(!vmem) // Protect agains clinet trying to create mult regions.
+   {
+      self = client_number;
+      init_ports(ccount);
+      number_of_clients = ccount;
+      start_timer();
+      Cvm_allocate(&vmem, vm_page_size * pcount);
+      Cvm_protect(vmem, vm_page_size * pcount, VM_PROT_NONE);
+      page_count = pcount;
+      page_table = new ptable_entry[pcount];
+
+      if(!page_table) {
+         cerr << "ERROR : allocation of memory failed during\
+         construction of sl_dsm_region\n";
+         exit(-1);
+      }
+
+      ptable_entry   *p = page_table;
+
+      for(int i = 0; i < page_count; i++, p++)
+      {
+         p->lock = mutex_alloc();
+         p->owner = hash(i, ccount);
+
+         if(p->owner == self)
+         {  // This client manages this page.
+#ifdef DEBUG
+            cout << "client " << self << " owns page " << i << "\n";
+#endif
+            p->time_stamp.set();
+            protect_page(i, VM_PROT_ALL);
+            p->state = WRITE;
+            p->readers = new intVQueue(ccount);
+         }
+         else
+         {
+            p->state = NO_ACCESS;
+            p->readers = NULL;
+         }
+         p->writer = PORT_NULL;
+      }
+
+
+      lookup_ports(ccount);
+      init(ccount, responder_ports[self]);
+   }
+}
+
+void sl_dsm_region::init_ports(unsigned client_count)
+{
+
+   if(self == 0)  // Only one sync thread per system resides on client 0.
+      cthread_detach(cthread_fork((cthread_fn_t) 
+                     sync_thread, (any_t) client_count));
+   responder_ports = new port_t[client_count];
+
+   if(!(responder_ports))
+   {
+      cerr << "ERROR: Memory allocation for port array failed\n";
+      exit(-1);
+   }
+
+   sync_port = PORT_NULL;
+
+   for(int i = 0; i < client_count; i++)
+   {
+      responder_ports[i] = PORT_NULL;
+   }
+
+
+// Allocate the local responder port
+
+   Cport_allocate(&responder_ports[self]);
+
+// Check the port in with the Mach netname server.
+   String number = dec(self);
+   String res_port_name = "res_port" + number;
+
+   Cnetname_check_in((char *) res_port_name, responder_ports[self]);
+}
+
+void sl_dsm_region::lookup_ports(unsigned client_count)
+{
+   kern_return_t     r;
+   boolean_t         done = FALSE;
+   String            number;
+   String            res_names[client_count];
+   String            sync = "sync";
+
+   for(int i = 0; i < client_count; i++)
+   {
+      number = dec(i);
+      res_names[i] = "res_port" + number;
+   }
+
+   for(int retries = 0; retries < MAX_RETRIES || !done; retries++)
+   {
+      done = TRUE;
+
+      for(int i = 0; i < client_count; i++)
+      {
+         if(sync_port == PORT_NULL)
+            Rnetname_lookup((char *) sync, &sync_port);
+         if(responder_ports[i] == PORT_NULL)
+         {
+            r = Rnetname_lookup((char *) res_names[i], &responder_ports[i]);
+
+            if(r != KERN_SUCCESS) {
+               done = FALSE;
+            }
+         }
+      }
+   }
+}
+int* sl_dsm_region::get_iptr()
+{
+   return (int *) vmem;
+
+}
+
+ 
+boolean_t sl_dsm_region::check_address(vm_address_t addr)
+{
+   vm_address_t end_addr;
+  
+   end_addr = vmem + (vm_page_size * page_count);
+
+   boolean_t result = (vmem <= addr) && (addr <= end_addr);
+
+   if(result == FALSE) {
+      printf("Address out of dsm range 0x%x\n",addr);
+      printf("start of range is 0x%x\n",vmem);
+      cout << "page count = " << page_count << "\n";
+   }
+    
+   return result;
+}
+ 
+unsigned sl_dsm_region::get_page_index(vm_address_t addr)
+{
+   vm_address_t offset = addr - vmem;
+
+   unsigned page_index = offset / vm_page_size;
+
+   return page_index;
+
+}                    
+                     
+vm_address_t sl_dsm_region::get_page_address(unsigned page_index)
+{                                                             
+   vm_address_t addr;                                         
+                     
+   addr = vmem + (vm_page_size * page_index);
+                                             
+   return addr;                              
+}              
+               
+void sl_dsm_region::copy_page(int page_index, vm_address_t page)
+{                                                            
+   int *dest_page = (int *) get_page_address(page_index);    
+   int *source_page = (int *) page;                      
+
+   dest_page[0] = 15;
+                                                         
+   for(int i = 0; i < vm_page_size / sizeof(int); i++)
+      dest_page[i] = source_page[i];                  
+
+                                                      
+  // Cvm_deallocate((vm_address_t) source_page, vm_page_size);
+}                                                           
+                                                            
+void sl_dsm_region::temp_copy(vm_address_t *temp_buf, unsigned page_index)
+{                                                                      
+   int *source_page = (int *) get_page_address(page_index);            
+                                                           
+   for(int i = 0; i < vm_page_size / sizeof(int); i++)     
+      temp_buf[i] = source_page[i];                        
+}                                  
+                                
+void sl_dsm_region::protect_page(int page_index, vm_prot_t protection)
+{                                                                  
+   vm_address_t addr = get_page_address(page_index);               
+#ifdef DEBUG
+  
+   cout << "protect_page " << protection << "\n";
+#endif
+  
+   Cvm_protect(addr, vm_page_size, protection);
+} 
+
+void sl_dsm_region::read_fault(unsigned page_index, unsigned client, port_t who)
+{
+   ptable_entry         *page = &page_table[page_index];
+   vm_address_t         *page_data;
+
+#ifdef DEBUG
+   
+cout << "READ_FAULT on client: " << self << " on page: " << page_index <<
+" page owner is " << page->owner << "page state is " << page->state <<"\n";
+#endif
+
+   port_t temp_port;
+
+   Cport_allocate(&temp_port);
+   
+   Dsm_msg              m(self, PORT_NULL, temp_port);
+
+   page_data = (vm_address_t *) get_page_address(page_index);
+
+
+   
+   if(page->owner == self)
+   {  // this client manages this page
+      mutex_lock(page->lock);
+
+// delta page time lock
+      while ((page->time_stamp.get_elapsed_time() < delta) &&
+             (page->state == WRITE)) 
+         Cthread_yield();
+
+      switch(page->state)
+      {
+      
+         case NO_ACCESS :  // single writer is another client
+            m.get_page(READ_DATA_REQUESTED, page_index, page->writer);
+debug_page_io("read_fault NO_ACCESS got_page ", m , rport(page->writer));
+            page->readers->enq(page->writer);
+            page->writer = PORT_NULL;
+            page->state = READ;
+            protect_page(page_index, VM_PROT_ALL);
+// race with main thread possible here!
+            copy_page(page_index, (vm_address_t) m.get_page_ptr());
+            protect_page(page_index, VM_PROT_READ);
+         
+            if(client != self)
+            {
+               page->readers->enq(responder_ports[client]);
+               m.send_page(READ_DATA_PROVIDED, page_index, page_data, who);
+debug_page_io("read_fault NO_ACCESS sent page ", m, who);
+            }
+         break;
+      
+         case READ : // This client is one of the readers.
+            if(client != self)
+            {
+               page->readers->enq(responder_ports[client]);
+               m.send_page(READ_DATA_PROVIDED, page_index, page_data, who);
+debug_page_io("read_fault READ send page ", m, who);
+            }
+            else
+            {
+#ifdef DEBUG
+               cout << "client " << self <<
+               " had a read fault on a read page " << page_index << ".\n";
+#endif
+            }
+         break;
+      
+         case WRITE :  // This client is the single writer.
+            if(client != self)
+            {
+               page->state = READ;
+               page->writer = PORT_NULL;
+               protect_page(page_index, VM_PROT_READ);
+               page->readers->enq(responder_ports[client]);
+               m.send_page(READ_DATA_PROVIDED, page_index, page_data, who);
+debug_page_io("read_fault WRITE sent page ", m, who);
+            }
+            else
+            {
+               cerr << "ERROR: client " << self <<
+               " had a read fault on write page " << page_index << ".\n";
+               exit(-1);
+            }
+         break;
+         
+         default :
+            cerr << "ERROR: bad page state " << page->state <<
+            " on read fault " << " on page " << page_index <<
+            " on client " << self << ".\n";
+            exit(-1);
+         break;
+      }
+      page->time_stamp.set();
+      mutex_unlock(page->lock);
+   }
+   else
+   {  // owner of this page is another client, pass the request along
+      m.get_page(READ_FAULT,page_index, responder_ports[page->owner]);
+debug_page_io("read_fault remote owner got page ", m, page->owner);
+      mutex_lock(page->lock);
+      protect_page(page_index, VM_PROT_ALL);
+      copy_page(page_index, (vm_address_t) m.get_page_ptr());
+      protect_page(page_index, VM_PROT_READ);
+      mutex_unlock(page->lock);
+   }
+#ifdef DEBUG
+   cout << "client " << self << " done with read fault\n";
+#endif
+   Cport_deallocate(temp_port);
+}
+
+void sl_dsm_region::write_fault(unsigned page_index, unsigned client, port_t who)
+{
+   ptable_entry         *page = &page_table[page_index];
+   port_t               local_port, a_client;
+   intVQueue            *the_readers;
+   vm_address_t         temp[page_int_size];
+   boolean_t            client_has_data = FALSE;
+   
+#ifdef DEBUG
+cout << "WRITE_FAULT on client: " << self << " on page: " << page_index <<
+" page owner is " << page->owner << " page state is " << page->state <<  "\n";
+#endif
+   Cport_allocate(&local_port);
+
+   port_t temp_port;
+   Cport_allocate(&temp_port);
+   
+   Dsm_msg              m(self, PORT_NULL, temp_port);
+
+   
+   if(page->owner == self)
+   {  // this client manages this page
+   mutex_lock(page->lock);
+
+// delta page time lock.
+      while(page->time_stamp.get_elapsed_time() < delta)
+         Cthread_yield();
+
+      switch(page->state)
+      {
+      
+         case NO_ACCESS :  // single writer is another client
+            // invalidate the single writer
+            m.get_page(WRITE_DATA_REQUESTED, page_index, page->writer);
+debug_page_io("write_fault NO_ACCESS got page ", m, rport(page->writer));
+            
+            if(client == self)  
+            {  // this client had a write fault
+               page->state = WRITE;
+               page->writer = responder_ports[self];
+               protect_page(page_index, VM_PROT_ALL);
+               copy_page(page_index, (vm_address_t) m.get_page_ptr());
+            }
+            else
+            {  // some other client had a write fault
+               page->writer = responder_ports[client];
+               m.send_page(WRITE_DATA_PROVIDED, page_index,
+                           m.get_page_ptr(), who);
+debug_page_io("write_fault NO_ACCESS sent page ", m, who);
+            }
+         break;
+      
+         case READ :
+            the_readers = page->readers;
+            while(!the_readers->empty())
+            {
+               a_client = the_readers->deq();
+               
+               if(a_client != responder_ports[client])
+                  m.wait_control(PAGE_INVALID, page_index, a_client);
+               else
+                  client_has_data = TRUE; 
+            }
+            if(client == self)
+            {  // This client is one of the readers and wants WRITE privilege.
+               page->state = WRITE;
+               page->writer = responder_ports[self];
+               protect_page(page_index, VM_PROT_ALL);
+            }
+            else if(client_has_data)
+            {
+               page->state = NO_ACCESS;
+               page->writer = responder_ports[client];
+               protect_page(page_index, VM_PROT_NONE);
+               m.send_control(WRITE_PERM_GRANTED, page_index,
+                              who); 
+            }
+            else
+            {  // Another client wants write privilege
+               page->state = NO_ACCESS;
+               page->writer = responder_ports[client];
+               protect_page(page_index, VM_PROT_READ);
+               temp_copy(temp, page_index);
+               protect_page(page_index, VM_PROT_NONE);
+               m.send_page(WRITE_DATA_PROVIDED, page_index,
+                           temp, who);
+debug_page_io("write_fault READ sent page ", m, who);
+            }
+               
+         break;
+      
+         case WRITE :  // This client is the single writer. 
+         
+            if(client != self)
+            {
+               page->state = NO_ACCESS;
+               page->writer = responder_ports[client];
+            // Down grade to read to make a temp copy which will be up to date
+               protect_page(page_index, VM_PROT_READ);
+               temp_copy(temp, page_index);
+               protect_page(page_index, VM_PROT_NONE);
+               m.send_page(WRITE_DATA_PROVIDED, page_index, temp,
+                           who);
+debug_page_io("write_fault WRITE sent page ", m, who);
+            }
+            else
+            {
+               cerr << "ERROR: client " << self <<
+               " had a write fault on write page " << page_index << ".\n";
+               exit(-1);
+            }
+         break;
+         
+         default :
+            cerr << "ERROR: bad page state " << page->state <<
+            " on read fault " << " on page " << page_index <<
+            " on client " << self << ".\n";
+            exit(-1);
+         break;
+      }
+   page->time_stamp.set();
+   mutex_unlock(page->lock);
+   }
+   else
+   {  // owner of this page is another client; pass the request along
+      m.get_page(WRITE_FAULT,page_index, responder_ports[page->owner]);
+
+      mutex_lock(page->lock);
+      page->state = WRITE;
+      page->writer = responder_ports[self];
+      protect_page(page_index, VM_PROT_ALL);
+      if(m.get_request() == WRITE_DATA_PROVIDED) {
+debug_page_io("write_fault remote owner got page ", m, page->owner);
+         copy_page(page_index, (vm_address_t) m.get_page_ptr());
+      }
+      else if(m.get_request() == WRITE_PERM_GRANTED)
+         cout << "Remote write fault write perm granted\n";
+
+      mutex_unlock(page->lock);
+   }
+#ifdef DEBUG
+   cout << "client " << self << " done with write fault\n";
+#endif
+   Cport_deallocate(temp_port);
+}
+
+
+void sl_dsm_region::get_port(unsigned who)
+{
+   String client_name = "client", number = dec(who);
+
+   client_name += number;
+
+   Cnetname_lookup((char *)client_name, &responder_ports[who]);
+}
+
+
+void sl_dsm_region::invalidate(unsigned page_index, port_t who)
+{
+   Dsm_msg m(self, who, PORT_NULL);
+   ptable_entry *page = &page_table[page_index];
+
+   mutex_lock(page->lock);
+
+   page->state = NO_ACCESS;
+
+   protect_page(page_index, VM_PROT_NONE);
+
+   m.send_control(INVALID_DONE);
+
+   mutex_unlock(page->lock);
+}
+
+void sl_dsm_region::send_read_page(unsigned page_index, port_t who)
+{
+
+   Dsm_msg m(self, who, PORT_NULL);
+   ptable_entry *page = &page_table[page_index];
+   vm_address_t *page_data = (vm_address_t *) get_page_address(page_index);
+
+   mutex_lock(page->lock);
+
+   page->state = READ;
+   protect_page(page_index, VM_PROT_READ);
+
+   m.send_page(READ_DATA_PROVIDED, page_index, page_data, who);
+   debug_page_io("send_read_page() sent page ", m, who);
+
+   mutex_unlock(page->lock);
+}
+
+void sl_dsm_region::send_write_page(unsigned page_index, port_t who)
+{
+   Dsm_msg m(self, who, PORT_NULL);
+   vm_address_t temp[page_int_size];
+
+   ptable_entry *page = &page_table[page_index];
+   vm_address_t *page_data = (vm_address_t *) get_page_address(page_index);
+
+   mutex_lock(page->lock);
+
+   page->state = NO_ACCESS;
+   page->writer = who;
+   protect_page(page_index, VM_PROT_READ);
+   temp_copy(temp, page_index);
+   protect_page(page_index, VM_PROT_NONE);
+
+   m.send_page(WRITE_DATA_PROVIDED, page_index, temp, who);
+   debug_page_io("send_write_page() sent page ", m, who);
+
+   mutex_unlock(page->lock);
+}
+
+// file     : sl_dsm.cc
+// author   : Peter Ogilvie
+// date     : 6/9/92
+// notes    : This file contains the threads which make the system work.
+//            It contains a function init() which is called by the
+//            sl_dsm_region constructor.  This function forks off the threads
+//            (exception, responder(s), and sync) with the appopriate
+//            parameters.
+#include <cthreads.h>
+#include <message.h>
+#include <mach.h>
+#include <stdio.h>
+#include <sys/exception.h>
+#include "C_mach_interface.h"
+#include "sl_dsm_region.h"
+#include "../dsm2/dsm_server/Dsm_msg.h"
+#include <stream.h>
+#include <String.h>
+#include <builtin.h>
+#include <timer.h>
+
+void handle_exception(vm_address_t addr); 
+any_t responder_thread(port_t server_port);
+
+
+typedef struct {
+    port_t old_exc_port;
+    port_t clear_port;
+    port_t exc_port;
+} ports_t;
+
+port_t server_port, handle_exc_port;
+
+volatile boolean_t  pass_on = FALSE;
+mutex_t             printing, alock;
+condition_t          done;
+ports_t ports;
+
+extern "C" { // required for linking.
+   boolean_t exc_server(msg_header_t*, msg_header_t*);
+   kern_return_t catch_exception_raise(port_t,port_t, port_t, int, int, int);
+   void mach_NeXT_exception(char *, int, int, int);
+}
+
+// thread exc_thread
+//  This thread is passed port_p on startup which contains the 
+//  the old exception port, the clear port, and the new eception port.
+//  The old exception port is used when the exception can't be cleared.  This
+//  might happen if a protection violation occured outside the dsm area or was
+//  an error not managed by the system such as a floating point error.  The
+//  clear port is used to signify the exception has been cleared and the kernel
+//  should restart the faulting thread.  The new exception thread is where the
+//  kernel sends exception messages.
+any_t exc_thread(ports_t *port_p)
+{
+    kern_return_t   r;
+    char           *msg_data[2][64];
+    msg_header_t   *imsg = (msg_header_t *)msg_data[0],
+                   *omsg = (msg_header_t *)msg_data[1];
+
+
+    /* Wait for exceptions. */
+    while (1) {
+        imsg->msg_size = 64;
+        imsg->msg_local_port = port_p->exc_port;
+        Cmsg_receive(imsg);
+
+            /* Give the message to the Mach exception server. */
+            if (exc_server(imsg, omsg)) {
+                /* Send the reply message that exc_serv gave us. */
+      Cmsg_send(omsg);
+            }
+            else { /* exc_server refused to handle imsg. */
+                mutex_lock(printing);
+                printf("exc_server didn't like the message\n");
+                mutex_unlock(printing);
+                exit(2);
+            }
+        
+
+        /* Pass the message to old exception handler, if necessary. */
+        if (pass_on == TRUE) {    
+            imsg->msg_remote_port = port_p->old_exc_port;
+            imsg->msg_local_port = port_p->clear_port;
+            Cmsg_send(imsg);
+        }
+    }
+}
+
+int write_flag;  // This flag is set on writes so writes can be distintished
+                 // from reads see discussion of the mach exception bug in 
+                 // thesis.
+
+/* 
+ * catch_exception_raise() is called by exc_server().  The only
+ * exception it can handle is EXC_BAD_ACCESS.  (Memory exception)
+ * This function is called by the Mach exc_server().
+ */
+kern_return_t catch_exception_raise(port_t exception_port, 
+    port_t thread, port_t task, int exception, int code, int subcode)
+{
+  int prot;
+  int page_index;
+  vm_address_t bad_addr = (vm_address_t) subcode;
+  sl_dsm_region d;
+  int client_no = d.Self();
+
+    if (exception == EXC_BAD_ACCESS && d.check_address(bad_addr)) {
+        /* Handle the exception so that the program can continue. */
+      
+
+      page_index = d.get_page_index(bad_addr);
+      if(write_flag) {
+#ifdef DEBUG
+         cout << "write fault on client " << client_no << " on page " <<
+         page_index << "\n";
+#endif
+         d.write_fault(page_index, client_no, PORT_NULL);   
+      }
+      else {
+#ifdef DEBUG
+         cout << "read fault on client " << client_no << " on page " <<
+         page_index << "\n";
+#endif
+         d.read_fault(page_index, client_no, PORT_NULL);
+      }
+#ifdef DEBUG
+      printf("bad address = 0x%x\n", subcode);
+#endif
+      
+      return KERN_SUCCESS;
+    }
+    else { /* Pass the exception on to the old port. */
+         cout << "bad address error on client " << client_no << "\n";
+        pass_on = TRUE;
+        mach_NeXT_exception("Forwarding exception", exception, 
+            code, subcode);
+        return KERN_FAILURE;  /* Couldn't handle this exception. */
+    }
+}
+
+// thread responder_thread
+// This thread receives requests from other clients in the system.
+any_t responder_thread(port_t respond_port)
+{
+   sl_dsm_region region;
+   unsigned page_index;
+   port_t who;
+   int client_no = region.Self();
+
+
+
+   Dsm_msg m(client_no, PORT_NULL, respond_port);
+
+   condition_signal(done);
+
+#ifdef DEBUG
+cout << "responder thread " << client_no << " past the condition signal\n";
+#endif
+
+   while(1)
+   {
+      m.receive();
+      Cthread_yield();  // Defeat handoff scheduling.
+      who = m.get_rport();
+      page_index = m.get_page_no();
+
+      switch(m.get_request())
+      {
+// responder thread acting as client
+         case PAGE_INVALID:
+#ifdef DEBUG
+            cout << "Responder thread of client_no " << client_no
+            << " " << Cthread_self() << "  PAGE_INVALID on page " <<
+            page_index << " from " << m.get_client_no() <<"\n";
+#endif
+            region.invalidate(page_index, who);
+         break;
+
+         case READ_DATA_REQUESTED:
+#ifdef DEBUG
+            cout << "Responder thread of client_no " << client_no
+            << " READ_DATA_REQUESTED on page " << page_index <<
+            " from " << m.get_client_no() <<"\n";
+#endif
+            region.send_read_page(page_index, who);
+         break;
+
+         case WRITE_DATA_REQUESTED:
+#ifdef DEBUG
+            cout << "Responder thread of client_no " << client_no
+            << " WRITE_DATA_REQUESTED on page " << page_index <<
+            " from " << m.get_client_no() <<"\n";
+#endif
+            region.send_write_page(page_index, who);
+         break;
+
+// responder thread acting as server
+         case READ_FAULT:
+#ifdef DEBUG
+            cout << "Responder thread of client_no " << client_no <<
+            " READ_FAULT on page " << page_index <<
+            " form " << m.get_client_no() << "\n";
+#endif
+            region.read_fault(page_index, m.get_client_no(), who);
+         break;
+
+         case WRITE_FAULT:
+#ifdef DEBUG
+            cout << "Responder thread of client_no " << client_no <<
+            " WRITE_FAULT on page " << page_index <<
+            "form " << m.get_client_no() <<  "\n";
+#endif
+            region.write_fault(page_index, m.get_client_no(), who);
+         break;   
+
+         default:  
+            cerr << "client " << client_no <<
+            " Responder thread got bad request " << m.get_request() <<
+            " from client "<< m.get_client_no() << " on page " <<
+            page_index << "\n";
+            exit(-1);
+      }
+   }
+
+}
+
+
+init(unsigned client_number, port_t respond_port)
+{
+    int              i;
+    int              *iptr, j;
+    port_t           a_port;
+
+
+    Cport_allocate(&a_port);
+    
+    printing = mutex_alloc();
+    alock = mutex_alloc();
+    done = condition_alloc();
+
+
+
+   Cport_allocate(&handle_exc_port);
+
+
+    /* Save the old exception port for this task. */
+    Ctask_get_exception_port(&(ports.old_exc_port));
+
+
+    /* Create a new exception port for this task. */
+    Cport_allocate(&(ports.exc_port));
+
+    Ctask_set_exception_port((ports.exc_port));
+
+    /* Fork the thread that listens to the exception port. */
+    cthread_detach(cthread_fork((cthread_fn_t)exc_thread, (any_t)&ports));
+
+
+    /* Fork the responder thread(s) */
+    for(i = 0; i < NUM_RESPONDERS; i++)
+       cthread_detach(cthread_fork((cthread_fn_t)responder_thread,
+                   (any_t)respond_port));
+
+    ports.clear_port = Cthread_self();
+
+// prevents race of constructor returning before responder_thread completes
+// initailization.
+    condition_wait(done, alock);
+   
+
+}
+
+// thread sync_thread
+// This thread implements builtin barrier events (such as INIT_DONE)
+// There is only one such thread in the system and resides on client 0.
+// It is also were some of the performace timing is done.
+sync_thread(unsigned client_count)
+{
+   intVQueue done_Q(client_count);
+   intVQueue wait_Q(client_count);
+   port_t sync_port, done_client, client0;
+   boolean_t clean_up_flag = FALSE, init_count = 0;
+   unsigned the_client, Q_len;
+
+cout << "SYNC_THREAD client_count = " << client_count << "\n";
+   String sync = "sync";
+
+   Cport_allocate(&sync_port);
+   Cnetname_check_in((char *) sync, sync_port);
+
+   Dsm_msg m(SYNC, PORT_NULL, sync_port);
+   Dsm_msg wait_msg(SYNC, PORT_NULL, sync_port);
+   Dsm_msg clean_up_msg(SYNC, PORT_NULL, sync_port);
+   Dsm_msg done_msg(SYNC, PORT_NULL, sync_port);
+
+   timer calc_timer;
+
+   while(1)
+   {
+      m.receive();
+      the_client = m.get_client_no();
+
+      switch(m.get_request())
+      {
+         case INIT_DONE :
+cout << "Got INIT_DONE msg from " << the_client << "\n";
+            init_count++;
+         break;
+
+         case WAIT_INIT :
+cout << "Got WAIT_INIT msg from " << the_client << "\n";
+            
+            wait_Q.enq(m.get_rport());
+            if(init_count == m.get_page_no())
+            {
+               calc_timer.set();  // start calc timer when init done.
+               while(!wait_Q.empty())
+                  wait_msg.send_control(INIT_DONE, wait_Q.deq());
+            }
+         break;
+
+         case CLIENT_DONE :
+         cerr << "Got CLIENT_DONE msg from " << the_client << "\n";
+            done_Q.enq(m.get_rport());
+            Q_len = done_Q.length();
+            if(the_client == 0)
+               client0 = m.get_rport();
+            if(Q_len == client_count -1 || client_count == 1)
+               cout << "Calc time = " << calc_timer.get_elapsed_time()
+               << " msec\n";
+
+            if(Q_len == client_count)
+            {
+               while(!done_Q.empty())
+               {
+                  done_client = done_Q.deq();
+                  if(done_client != client0)
+                     done_msg.send_control(CLIENT_DONE, done_client);
+                }
+                done_msg.send_control(CLIENT_DONE, client0);
+            }  
+            else if(Q_len == (client_count -1) && clean_up_flag)
+               clean_up_msg.send();
+
+         break;
+
+         case CLEAN_UP :
+            cerr << "Got clean up message from " << the_client << "\n";
+            cout << "CLEAN_UP remote port is " << m.get_rport() << "\n";
+            if(done_Q.length() == (client_count -1))
+            {
+               clean_up_msg.set_rport(m.get_rport());
+               clean_up_msg.set_request(CLEAN_UP);
+               clean_up_msg.set_page_no(0);
+               clean_up_msg.set_page(PAGE_NULL);
+               clean_up_msg.send();
+            } 
+              
+            else if(!clean_up_flag)
+            { 
+               clean_up_flag = TRUE;
+               clean_up_msg.set_rport(m.get_rport());
+               clean_up_msg.set_request(CLEAN_UP);
+               clean_up_msg.set_page_no(0);
+               clean_up_msg.set_page(PAGE_NULL);
+            } 
+
+         break;
+
+         default :
+            cerr << "Sync server got bad request\n";
+            exit(-1);
+         break;
+        }
+      }
+}
+
+// file     :  vmatrix.cc
+// author   :  Peter Ogilvie
+// date     :  5/30/92
+// notes    :  This program tests the use of and performance of server-less
+//             distributed shared memory. It is quite similar to the program of
+//             the same name used to test the single server distributed shared
+//             memory.
+
+#include <stdio.h>
+#include <cthreads.h>
+#include <stdlib.h>
+#include "sl_dsm_region.h"
+#include "mfloat.h"
+#include <builtin.h>
+#include <timer.h>
+
+// function print_matrix()
+// results  :  This function prints a matrix of floats to standard out pointed
+//             to by m.  The size of the matrix is specified by size_x and 
+//             size_y.
+// notes    :  This function is used for debugging.
+void print_matrix(mfloat *m, int size_x, int size_y)
+{
+   int i, limit = size_x * size_y;
+   
+   for(i = 0; i < limit; i++)
+   {
+      if(i % size_x == 0)
+         cout << "\n";
+         
+      
+   }
+   cout << "\n";
+}
+
+// function fill_easy()
+// results  :  Fills the memory pointed to by m with sequential numbers.
+//             the size of the matrix is determined by size_x and size_y.
+// notes    :  The matrix used in this function is the first multiplicand.
+//             It is filled with sequential numbers to make checking the 
+//             results simple, and size independent.  Also the use of 
+//             sequential numbers allows pages where problems occure to be 
+//             easily calculated.
+void fill_easy(mfloat *m, int size_x, int size_y)
+{
+   int i;
+   
+   for(i = 0; i < size_x * size_y; i++)
+      m[i] = i;
+}
+
+// function fill_zero()
+// results  :  Fills the result area with zeros.
+// notes    :  While not really required since new memory is automaticly
+//             zero filled it was felt that this would simulate a broader
+//             class of applications in which all memory required some initial
+//             state.
+void fill_zero(mfloat *m , int size_x, int size_y)
+{
+   for(int i = 0; i < size_x * size_y; i++)
+      m[i] = 0.0;
+}
+
+
+
+// function fill_identity()
+// results  : fills the square matrix pointed to by m with side size side
+//            with the identity matrix.
+// assumes  : Square matrix with side = side
+void fill_identity(mfloat *m, int side)
+{
+   int i;
+   
+      for(i = 0; i < side * side; i++)
+      {
+         if(i % (side +1))
+            m[i] = 0.0;    
+         else
+            m[i] = 1.0; 
+      }
+}
+
+// function pmult_matrix(), parallel matrix multiply.
+// results  :  result = a * b where result, a, b are square matrices of
+//             floats.  The portion of the calculation done is determined
+//             by the parameters start and stop.  For the full matrix:
+//             start = 0 stop = side_a * side_a.
+// Assumes: Square matrix
+void pmult_matrix(mfloat *result, mfloat *a, int side_a, 
+                         mfloat *b, int side_b, 
+                         int start, int stop)
+{
+   int i, j, pos1, pos2;
+   
+   
+   for(i = start; i < stop; i++)
+   {
+      pos1 = i - (i % side_a);
+      pos2 = i % side_b;
+      for(j = 0; j < side_b; j++)
+      {
+         result[i] = result[i] + (a[pos1] * b[pos2]);
+         pos1++;
+         pos2 += side_b;
+      }
+   }
+}
+// function calc_pages()
+// returns  :  The number of pages required hold the three floating point
+//             matrices used in the program.  (Two for the source and one for
+//             the result.) Where size is the number of elements in one side of
+//             of a square matrix.
+// assumes  :  size > 0
+// notes    :  May allocate one more page than needed.  This extra page may
+//             be used to hold event_counters.
+inline int calc_pages(int size)
+{
+   return (size * size * sizeof(mfloat)  * 3 /vm_page_size) + 1;
+}
+
+// function start_index
+// returns  :  The starting index for use by pmult_matrix, where client_no
+//             is the client number of this client, number_clients is the 
+//             number of clients being used for this computation, and size
+//             is the size of one side of the square matrix.
+inline int start_index(int client_no, int number_clients, int size)
+{
+   return client_no * size * size / number_clients;
+}
+
+// function stop_index
+// returns  :  The ending index for use by pmult_matrix, where client_no
+//             is the client number of this client, number_clients is the 
+//             number of clients being used for this computation, and size
+//             is the size of one side of the square matrix.
+inline int stop_index(int client_no, int number_clients, int size)
+{
+   return (client_no + 1) * size * size / number_clients;
+}
+
+// function check_results()
+// returns  : TRUE if the result matrix pointed to by m contains the correct
+//            results which is a sequence of sequential numbers from 
+//            0...size * size.  Where size = the size of one side of the
+//            square matrix.
+int check_results(mfloat *m,int size)
+{
+   int i, limit = size * size;
+   boolean_t worked = TRUE;
+   
+   for(i = 0; i < limit; i++)
+      if(float(m[i]) != i) {
+         cerr << m[i] << " != " << i << "\n";
+         worked = FALSE;
+      } 
+      
+   return worked;
+}
+
+extern "C" int gethostname(char *, int);
+
+   
+main(int argc, char *argv[])
+{
+   char name[64];
+   timer init_timer, check_timer;
+
+// get the arguments from the command line.
+   if(argc != 4) {
+      cerr << "usage: vmatrix <number of clients> <size of square matrix>\
+      <client_no> \n";
+      exit(-1);
+   }
+   int number_clients = atoi(argv[1]), size = atoi(argv[2]);
+   int client_no = atoi(argv[3]);
+   
+   
+// pointers which point to the matrices
+   mfloat *m, *x, *y;
+   
+   int elements = size * size;
+   int *iptr;
+   sl_dsm_region  d(calc_pages(size), number_clients, client_no);
+   double atime;
+
+// Message to sent events to server for barrier events
+   port_t  event_port;
+   Cport_allocate(&event_port);
+   Dsm_msg event_msg(client_no, d.get_sync_port() , event_port);
+
+
+   
+   gethostname(name,64);
+   cout << "client " << client_no << " is on " << name << "\n";
+   iptr = d.get_iptr();
+   
+   
+// Set the pointers of the matrices to point into distributed shared memory.
+   m = (mfloat *) iptr;
+   x = m + elements;
+   y = x + elements;
+
+
+// Initialization.  If fewer than three clients client 0 dose all inits else
+// init is shared by client 0 1, and 2.
+int wait_count;
+if(number_clients >= 3) {
+   wait_count = 3;
+   if(client_no == 0) // client 1 does the init
+   {
+      init_timer.set();
+      fill_easy(x, size, size);
+      event_msg.send_control(INIT_DONE);
+      cout << "init time = " << init_timer.get_elapsed_time() << " msec\n";
+   }
+   if(client_no == 1 )
+   {
+      init_timer.set();
+      fill_identity(y, size);
+      event_msg.send_control(INIT_DONE);
+      cout << "init time = " << init_timer.get_elapsed_time() << " msec\n";
+   }
+   if(client_no == 2 )
+   {
+      init_timer.set();
+      fill_zero(m, size, size);
+      event_msg.send_control(INIT_DONE);
+      cout << "init time = " << init_timer.get_elapsed_time() << " msec\n";
+   }
+}
+else
+{
+   wait_count = 1;
+   if(client_no == 0)
+   {
+      init_timer.set();
+      fill_easy(x, size, size);
+      fill_identity(y, size);
+      fill_zero(m, size, size);
+      event_msg.send_control(INIT_DONE);
+      cout << "init time = " << init_timer.get_elapsed_time() << " msec\n";
+   }
+}
+   event_msg.wait_control(WAIT_INIT, wait_count , d.get_sync_port());
+
+
+   
+// This is the calculation
+   pmult_matrix(m, x, size, y, size,
+                start_index(client_no, number_clients, size),
+                stop_index(client_no, number_clients, size));
+
+      
+   if(client_no == 0) // client 0 checks the results
+   {
+      event_msg.wait_control(CLEAN_UP);
+      check_timer.set();
+
+      if(check_results(m, size))
+         cerr << "\nmult worked\n";
+      else
+         cerr << "mult failed\n";
+      
+      cout << "Check time = " << check_timer.get_elapsed_time() << "msec\n";
+   }
+
+   event_msg.wait_control(CLIENT_DONE);
+
+   cout  << "client " << client_no << " done.\n";
+}
+@

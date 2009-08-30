@@ -1,0 +1,43 @@
+head     1.1;
+branch   ;
+access   ;
+symbols  ;
+locks    ;
+comment  @# @;
+
+
+1.1
+date     95.12.12.21.45.33;  author pogilvie;  state Exp;
+branches ;
+next     ;
+
+
+desc
+@@
+
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#  Makefile with suffix rule for C++.
+.SUFFIXES : .cc
+
+GNU      = /usr/local/gnu/lib
+GINCLUDE = /usr/include/g++
+GLIB     = ${GNU}/libg++.a
+OBJS     = hello.o
+CFLAGS   = -g
+
+.cc.o :
+	cc++ -I${GINCLUDE} -c $<
+
+hello : $(OBJS)
+	cc++ -I${GINCLUDE} -o $@@ ${OBJS} -lg++
+
+
+clean:	
+	rm -f $(OBJS) hello
+@

@@ -1,0 +1,85 @@
+
+/*
+	class		:	sl_dsm_region
+	author	:	Peter Ogilvie
+	date		:	6/9/92
+	notes		:	This class addes coherency management to dsm_region so that
+					a server is no longer required in the system.
+*/
+
+#ifndef SL_DSM_REGION
+#define SL_DSM_REGION
+
+#include "../dsm2/dsm_region.h"
+#include "../dsm2/dsm_server/Dsm_msg.h"
+#include <stream.h>
+#include <String.h>
+#include <int.VQueue.h>
+
+
+enum page_state { NO_ACCESS, READ, WRITE };
+// types of requests
+#define CLIENT_INIT            0
+#define EXCEPTION_INIT         1
+#define RESPONDER_INIT         2
+#define READ_FAULT             3
+#define WRITE_FAULT            4
+#define WRITE_DATA_PROVIDED    5
+#define CLIENT_DONE            6
+#define PAGE_INVALID           7
+#define WRITE_PERM_GRANTED     8
+#define TEST                   9
+#define READ_DATA_REQUESTED    10
+#define WRITE_DATA_REQUESTED   11
+#define READ_DATA_PROVIDED     12
+#define INVALID_DONE           13
+#define CLEAN_UP               14
+#define INIT_DONE              15
+#define WAIT_INIT              16
+
+
+const retries = 3;
+
+typedef struct {
+	mutex_t		lock;			// Only one thread at a time may modify a page.
+	page_state	state;		
+	unsigned		owner;		// Client number of the owner of this page.
+	port_t		writer;		// Port of the single writer.
+	intVQueue	*readers;	// This of ports of readers of this page.
+}ptable_entry;
+
+
+class sl_dsm_region : public dsm_region {
+
+	private:
+		static ptable_entry		*page_table;
+		static port_t				*client_table;
+		static unsigned			self;
+		static unsigned			number_of_clients;
+
+	
+	public:
+		sl_dsm_region(unsigned pcount, unsigned ccount, unsigned client_number);
+
+		sl_dsm_region();
+		
+		void read_fault(unsigned page_index, unsigned who);
+
+		void write_fault(unsigned page_index, unsigned who);
+
+		void invalidate(unsigned page_index, port_t who);
+
+		void send_read_page(unsigned page_index, port_t who);
+
+		void send_write_page(unsigned page_index, port_t who);
+
+		void protect_page(unsigned page_index, vm_prot_t protection);
+
+		unsigned Self() { return self; }
+
+		void get_port(unsigned who);
+
+};
+
+#endif
+

@@ -1,0 +1,114 @@
+/*
+   implementation	: dsm_region.cc
+	author			: Peter Ogilvie
+	date				: 4/10/92
+*/
+
+
+#include "dsm_region.h"
+#include <stream.h>
+
+#ifdef _NeXT_CPP_CLASSVAR_BUG
+		static vm_address_t vmem;
+		// Class variable which points to client's locally allocated memory.
+
+		static unsigned page_count;
+#endif /* _NeXT_CPP_CLASSVAR_BUG */
+
+
+static vm_address_t vmem = address_null;
+// Set vmem to NULL to can tell if mem has already been allocated.
+
+extern int init(unsigned number_of_clients);
+
+static unsigned page_count = 0;
+
+void dsm_region::dsm_init(unsigned pcount, unsigned number_of_clients)
+{
+	Cvm_allocate(&vmem, vm_page_size * pcount);
+	Cvm_protect(vmem, vm_page_size * pcount, VM_PROT_NONE);
+	page_count = pcount;
+	init(number_of_clients);
+	
+}
+	
+
+dsm_region::dsm_region(unsigned pcount = 10, unsigned number_of_clients = 2)
+{
+	if(!vmem)
+		dsm_init(pcount, number_of_clients);
+
+}
+
+int* dsm_region::get_iptr()
+{
+	return (int *) vmem;
+
+}
+
+
+boolean_t dsm_region::check_address(vm_address_t addr)
+{
+	vm_address_t end_addr;
+	
+   end_addr	= vmem + (vm_page_size * page_count);
+
+	boolean_t result = (vmem <= addr) && (addr <= end_addr);
+
+	if(result == FALSE) {
+		printf("Address out of dsm range 0x%x\n",addr);
+		printf("start of range is 0x%x\n",vmem);
+		cout << "page count = " << page_count << "\n";
+	}
+
+	return result;
+}
+
+unsigned dsm_region::get_page_index(vm_address_t addr)
+{
+	vm_address_t offset = addr - vmem;
+
+	unsigned page_index = offset / vm_page_size;
+
+	return page_index;
+
+	return page_index;
+}
+
+vm_address_t dsm_region::get_page_address(unsigned page_index)
+{
+	vm_address_t addr;
+
+	addr = vmem + (vm_page_size * page_index);
+
+	return addr;
+}
+
+void dsm_region::copy_page(int page_index, vm_address_t page)
+{
+	int *dest_page = (int *) get_page_address(page_index);
+	int *source_page = (int *) page;
+	
+	for(int i = 0; i < vm_page_size / sizeof(int); i++)
+		dest_page[i] = source_page[i];
+
+	// Cvm_deallocate((vm_address_t) source_page, vm_page_size);
+}
+
+void dsm_region::temp_copy(vm_address_t *temp_buf, unsigned page_index)
+{
+	int *source_page = (int *) get_page_address(page_index);
+	
+	for(int i = 0; i < vm_page_size / sizeof(int); i++)
+		temp_buf[i] = source_page[i];
+	cout << "got to temp copy\n";
+}
+
+void dsm_region::protect_page(int page_index, vm_prot_t protection)
+{
+	vm_address_t addr = get_page_address(page_index);
+
+	Cvm_protect(addr, vm_page_size, protection);
+}
+
+
